@@ -21,7 +21,7 @@ import net.minecraftforge.fml.common.Mod;
 public class STapHandler {
 
     // --- S-tap ---
-    private static final int DURATION_TICKS = 2;       // 1 тик = 50 мс
+    private static final int DURATION_TICKS = 1;       // 1 тик = 50 мс
     private static final boolean PARTICLES = true;
     private static final boolean SOUND = true;
 
