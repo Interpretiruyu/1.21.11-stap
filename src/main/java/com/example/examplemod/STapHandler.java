@@ -20,6 +20,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.client.event.ViewportEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.AttackEntityEvent;
 import net.minecraftforge.eventbus.api.listener.SubscribeEvent;
@@ -39,14 +40,15 @@ public class STapHandler {
 
     // ---------- наведение камеры после удара ----------
     private static final boolean AIM = true;
+    private static final boolean AIM_WHEN_LOCKED = true;  // работает ли наведение, когда камера заблокирована клавишей X
     private static final int AIM_TICKS = 20;              // 20 тиков = 1 секунда
     private static final float AIM_SMOOTH = 0.2f;
     private static final double AIM_HEIGHT = 0.8;
 
     // ---------- перл по клавише Z ----------
-    private static final double PEARL_OFFSET = 1.5;       // на сколько блоков ближе к вам цели падает перл (0 = на самого игрока, отрицательное = за него)
-    private static final double PEARL_MAX_ERROR = 3.0;    // если расчётная точка падения дальше от цели - бросок отменяется ("слишком далеко")
-    private static final boolean RESTORE_ROTATION = true; // вернуть камеру после броска
+    private static final double PEARL_OFFSET = 1.5;
+    private static final double PEARL_MAX_ERROR = 3.0;
+    private static final boolean RESTORE_ROTATION = true;
 
     private static final SoundEvent HIT_SOUND = SoundEvent.createVariableRangeEvent(
             Identifier.fromNamespaceAndPath(STapMod.MODID, "hit"));
@@ -56,6 +58,8 @@ public class STapHandler {
             KeyMapping.Category.register(Identifier.fromNamespaceAndPath(STapMod.MODID, "main"));
     private static final KeyMapping PEARL_KEY =
             new KeyMapping("key.stap.pearl", InputConstants.KEY_Z, CATEGORY);
+    private static final KeyMapping LOCK_KEY =
+            new KeyMapping("key.stap.lock", InputConstants.KEY_X, CATEGORY);
 
     private static int ticksLeft = 0;
 
@@ -66,9 +70,16 @@ public class STapHandler {
     private static Entity aimTarget = null;
     private static int aimTicksLeft = 0;
 
+    // блокировка камеры
+    private static boolean cameraLocked = false;
+    private static float lockYaw = 0f;
+    private static float lockPitch = 0f;
+    private static LocalPlayer lockOwner = null;
+
     @SubscribeEvent
     public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
         event.register(PEARL_KEY);
+        event.register(LOCK_KEY);
     }
 
     // ================= удар =================
@@ -116,7 +127,6 @@ public class STapHandler {
         }
     }
 
-    // удар засчитывается, если цель сейчас может получить урон
     private static boolean isHitSuccessful(Entity target) {
         if (!(target instanceof LivingEntity living)) return true;
         return living.isAlive() && living.hurtTime == 0;
@@ -132,13 +142,37 @@ public class STapHandler {
             comboHits = 0;
         }
 
+        // нет игрока (выход из мира, смерть, смена мира) - снимаем блокировку
+        if (mc.player == null || (cameraLocked && mc.player != lockOwner)) {
+            cameraLocked = false;
+            lockOwner = null;
+        }
+
         if (mc.player == null || mc.screen != null) {
             ticksLeft = 0;
             return;
         }
 
+        while (LOCK_KEY.consumeClick()) {
+            cameraLocked = !cameraLocked;
+            if (cameraLocked) {
+                lockYaw = mc.player.getYRot();
+                lockPitch = mc.player.getXRot();
+                lockOwner = mc.player;
+            } else {
+                lockOwner = null;
+            }
+            mc.player.displayClientMessage(Component.literal(
+                    cameraLocked ? "Камера заблокирована" : "Камера разблокирована"), true);
+        }
+
         while (PEARL_KEY.consumeClick()) {
             throwPearlAtNearestPlayer(mc);
+        }
+
+        if (cameraLocked) {
+            mc.player.setYRot(lockYaw);
+            mc.player.setXRot(lockPitch);
         }
 
         if (ticksLeft > 0) {
@@ -158,7 +192,8 @@ public class STapHandler {
 
         Minecraft mc = Minecraft.getInstance();
         LocalPlayer player = mc.player;
-        if (player == null || mc.screen != null || aimTarget == null || !aimTarget.isAlive()) {
+        if (player == null || mc.screen != null || aimTarget == null || !aimTarget.isAlive()
+                || (cameraLocked && !AIM_WHEN_LOCKED)) {
             aimTicksLeft = 0;
             aimTarget = null;
             return;
@@ -180,8 +215,37 @@ public class STapHandler {
         player.setYRot(yaw + Mth.wrapDegrees(wantYaw - yaw) * AIM_SMOOTH);
         player.setXRot(Mth.clamp(pitch + (wantPitch - pitch) * AIM_SMOOTH, -90.0f, 90.0f));
 
+        syncLock(player);
+
         if (aimTicksLeft == 0) {
             aimTarget = null;
+        }
+    }
+
+    // ================= блокировка камеры =================
+    // запоминаем новый угол, если его изменил сам мод (наведение, перл)
+    private static void syncLock(LocalPlayer player) {
+        if (cameraLocked) {
+            lockYaw = player.getYRot();
+            lockPitch = player.getXRot();
+        }
+    }
+
+    // каждый кадр: возвращаем угол обзора и поворот игрока, отменяя движение мышью
+    @SubscribeEvent
+    public static void onCameraAngles(ViewportEvent.ComputeCameraAngles event) {
+        if (!cameraLocked) return;
+
+        Minecraft mc = Minecraft.getInstance();
+        LocalPlayer player = mc.player;
+        if (player == null || mc.screen != null) return;
+
+        player.setYRot(lockYaw);
+        player.setXRot(lockPitch);
+
+        if (!event.getCamera().isDetached()) {   // от первого лица
+            event.setYaw(lockYaw);
+            event.setPitch(lockPitch);
         }
     }
 
@@ -228,18 +292,19 @@ public class STapHandler {
         float prevYaw = player.getYRot();
         float prevPitch = player.getXRot();
 
-        inv.setSelectedSlot(pearlSlot);          // берём перл (слот уйдёт на сервер при useItem)
+        inv.setSelectedSlot(pearlSlot);
         player.setYRot(aim[0]);
         player.setXRot(aim[1]);
 
-        mc.gameMode.useItem(player, InteractionHand.MAIN_HAND);   // бросок
+        mc.gameMode.useItem(player, InteractionHand.MAIN_HAND);
         player.swing(InteractionHand.MAIN_HAND);
 
-        inv.setSelectedSlot(prevSlot);           // возвращаем прежний предмет
+        inv.setSelectedSlot(prevSlot);
         if (RESTORE_ROTATION) {
             player.setYRot(prevYaw);
             player.setXRot(prevPitch);
         }
+        syncLock(player);
     }
 
     private static AbstractClientPlayer findNearestPlayer(Minecraft mc) {
@@ -256,8 +321,6 @@ public class STapHandler {
         return best;
     }
 
-    // Подбирает yaw/pitch, чтобы перл упал у цели. Физика перла: скорость 1.5,
-    // за тик: позиция += скорость; скорость *= 0.99; скорость.y -= 0.03.
     private static float[] computePearlAim(LocalPlayer player, Entity target) {
         Vec3 start = new Vec3(player.getX(), player.getEyeY() - 0.1, player.getZ());
 
@@ -286,7 +349,6 @@ public class STapHandler {
         float bestPitch = 0f;
         double bestErr = Double.MAX_VALUE;
 
-        // от пологой траектории к навесной: при равной точности выигрывает пологая
         for (float pitch = 45f; pitch >= -89f; pitch -= 0.25f) {
             double pr = pitch * (Math.PI / 180.0);
             double vx = -Math.sin(yawRad) * Math.cos(pr) * 1.5 + vx0;
@@ -297,7 +359,7 @@ public class STapHandler {
             for (int t = 0; t < 300; t++) {
                 double nx = x + vx, ny = y + vy, nz = z + vz;
 
-                if (y >= destY && ny < destY) {              // пересекли высоту цели сверху вниз
+                if (y >= destY && ny < destY) {
                     double k = (y - destY) / (y - ny);
                     double cx = x + (nx - x) * k;
                     double cz = z + (nz - z) * k;
