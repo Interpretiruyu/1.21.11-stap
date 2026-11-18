@@ -55,7 +55,7 @@ public class STapHandler {
 
     // ---------- автоматическая еда ----------
     private static final float FOOD_HEALTH_LIMIT = 12.0f;
-    private static final double FOOD_TIMEOUT_SECONDS = 0.1;
+    private static final double FOOD_TIMEOUT_SECONDS = 0.4;
     private static final int FOOD_TIMEOUT = (int) Math.round(FOOD_TIMEOUT_SECONDS * 20); // 18
 
     private static boolean usingFood = false;
