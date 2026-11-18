@@ -17,6 +17,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.inventory.ClickType;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.phys.Vec3;
@@ -53,9 +54,8 @@ public class STapHandler {
     private static final boolean RESTORE_ROTATION = true;
 
     // ---------- автоматическая еда ----------
-    private static final float FOOD_HEALTH_LIMIT = 10.0f;
-    private static final double FOOD_TIMEOUT_SECONDS = 0.2;
-    private static final int FOOD_TIMEOUT = (int) Math.round(FOOD_TIMEOUT_SECONDS * 20); // 18
+    private static final float FOOD_HEALTH_LIMIT = 6.0f;
+    private static final int FOOD_TIMEOUT = 45; // в тиках (~2.25 сек)
 
     private static boolean usingFood = false;
     private static boolean foodUseStarted = false;
@@ -63,6 +63,7 @@ public class STapHandler {
     private static int foodUseTicks = 0;
     private static int previousFoodSlot = -1;
     private static int foodInventorySlot = -1;
+    private static int foodHotbarSlot = -1;
 
     private static final SoundEvent HIT_SOUND = SoundEvent.createVariableRangeEvent(
             Identifier.fromNamespaceAndPath(STapMod.MODID, "hit"));
@@ -197,11 +198,10 @@ public class STapHandler {
         }
 
         Inventory inv = player.getInventory();
-
         int foundSlot = -1;
 
-        // Поиск еды во всём инвентаре
-        for (int i = 0; i < 36; i++) {
+        // Первый слот хотбара не используем.
+        for (int i = 1; i < 36; i++) {
             ItemStack stack = inv.getItem(i);
 
             if (!stack.isEmpty() && stack.get(DataComponents.FOOD) != null) {
@@ -216,43 +216,80 @@ public class STapHandler {
 
         previousFoodSlot = inv.getSelectedSlot();
         foodInventorySlot = foundSlot;
+        foodHotbarSlot = foundSlot;
 
-        // Если еда находится в основном инвентаре,
-        // временно меняем её местами с предметом в руке
         if (foundSlot >= 9) {
-            ItemStack foodStack = inv.getItem(foundSlot);
-            ItemStack handStack = inv.getItem(previousFoodSlot);
+            // Сначала ищем свободный слот хотбара, не используя первый слот.
+            int targetSlot = -1;
 
-            inv.setItem(foundSlot, handStack);
-            inv.setItem(previousFoodSlot, foodStack);
-        } else {
-            inv.setSelectedSlot(foundSlot);
+            for (int i = 1; i < 9; i++) {
+                if (inv.getItem(i).isEmpty()) {
+                    targetSlot = i;
+                    break;
+                }
+            }
+
+            // Если свободных слотов нет, временно занимаем слот со 2-го по 9-й.
+            if (targetSlot == -1) {
+                targetSlot = previousFoodSlot >= 1 && previousFoodSlot <= 8
+                        ? previousFoodSlot : 1;
+            }
+
+            foodHotbarSlot = targetSlot;
+
+            // SWAP синхронизирует перестановку с сервером.
+            mc.gameMode.handleInventoryMouseClick(
+                    player.containerMenu.containerId,
+                    foundSlot,
+                    targetSlot,
+                    ClickType.SWAP,
+                    player
+            );
         }
+
+        inv.setSelectedSlot(foodHotbarSlot);
 
         usingFood = true;
         foodUseStarted = false;
         foodUseTicks = 0;
 
-        // Зажимаем ПКМ
         mc.options.keyUse.setDown(true);
     }
 
     private static void stopAutoFood(Minecraft mc) {
         mc.options.keyUse.setDown(false);
 
-        if (mc.player != null) {
-            Inventory inv = mc.player.getInventory();
+        if (mc.player != null && mc.gameMode != null) {
+            LocalPlayer player = mc.player;
+            Inventory inv = player.getInventory();
 
-            // Возвращаем предметы на прежние места
-            if (foodInventorySlot >= 9 && previousFoodSlot >= 0) {
-                ItemStack foodStack = inv.getItem(previousFoodSlot);
-                ItemStack handStack = inv.getItem(foodInventorySlot);
+            // Выбрасываем только одну оставшуюся единицу еды, не всю стопку.
+            if (foodUseStarted && foodHotbarSlot >= 0 && foodHotbarSlot < 9) {
+                ItemStack foodStack = inv.getItem(foodHotbarSlot);
 
-                inv.setItem(foodInventorySlot, foodStack);
-                inv.setItem(previousFoodSlot, handStack);
+                if (!foodStack.isEmpty() && foodStack.get(DataComponents.FOOD) != null) {
+                    mc.gameMode.handleInventoryMouseClick(
+                            player.containerMenu.containerId,
+                            36 + foodHotbarSlot,
+                            0,
+                            ClickType.THROW,
+                            player
+                    );
+                }
             }
 
-            if (previousFoodSlot >= 0) {
+            // Если еда была в основном инвентаре, возвращаем предметы на места.
+            if (foodInventorySlot >= 9 && foodHotbarSlot >= 1 && foodHotbarSlot <= 8) {
+                mc.gameMode.handleInventoryMouseClick(
+                        player.containerMenu.containerId,
+                        foodInventorySlot,
+                        foodHotbarSlot,
+                        ClickType.SWAP,
+                        player
+                );
+            }
+
+            if (previousFoodSlot >= 0 && previousFoodSlot < 9) {
                 inv.setSelectedSlot(previousFoodSlot);
             }
         }
@@ -263,6 +300,7 @@ public class STapHandler {
 
         previousFoodSlot = -1;
         foodInventorySlot = -1;
+        foodHotbarSlot = -1;
     }
 
     // ================= тик (до) =================
@@ -284,6 +322,7 @@ public class STapHandler {
                 foodUseTicks = 0;
                 previousFoodSlot = -1;
                 foodInventorySlot = -1;
+                foodHotbarSlot = -1;
             }
 
             cameraLocked = false;
