@@ -1,4 +1,3 @@
-
 package com.example.examplemod;
 
 import com.mojang.blaze3d.platform.InputConstants;
@@ -6,6 +5,7 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
@@ -54,7 +54,8 @@ public class STapHandler {
 
     // ---------- автоматическая еда ----------
     private static final float FOOD_HEALTH_LIMIT = 6.0f;
-    private static final int FOOD_TIMEOUT = 0.5;
+    private static final double FOOD_TIMEOUT_SECONDS = 0.2;
+    private static final int FOOD_TIMEOUT = (int) Math.round(FOOD_TIMEOUT_SECONDS * 20); // 18
 
     private static boolean usingFood = false;
     private static boolean foodUseStarted = false;
@@ -203,7 +204,7 @@ public class STapHandler {
         for (int i = 0; i < 36; i++) {
             ItemStack stack = inv.getItem(i);
 
-            if (!stack.isEmpty() && stack.getFoodProperties(player) != null) {
+            if (!stack.isEmpty() && stack.get(DataComponents.FOOD) != null) {
                 foundSlot = i;
                 break;
             }
