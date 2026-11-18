@@ -54,8 +54,9 @@ public class STapHandler {
     private static final boolean RESTORE_ROTATION = true;
 
     // ---------- автоматическая еда ----------
-    private static final float FOOD_HEALTH_LIMIT = 6.0f;
-    private static final int FOOD_TIMEOUT = 45; // в тиках (~2.25 сек)
+    private static final float FOOD_HEALTH_LIMIT = 12.0f;
+    private static final double FOOD_TIMEOUT_SECONDS = 0.1;
+    private static final int FOOD_TIMEOUT = (int) Math.round(FOOD_TIMEOUT_SECONDS * 20); // 18
 
     private static boolean usingFood = false;
     private static boolean foodUseStarted = false;
